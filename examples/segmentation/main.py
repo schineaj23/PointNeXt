@@ -10,7 +10,6 @@ from tqdm import tqdm
 import torch, torch.nn as nn
 from torch import distributed as dist, multiprocessing as mp
 from torch.utils.tensorboard import SummaryWriter
-from torch_scatter import scatter
 from openpoints.utils import set_random_seed, save_checkpoint, load_checkpoint, resume_checkpoint, setup_logger_dist, \
     cal_model_parm_nums, Wandb, generate_exp_directory, resume_exp_directory, EasyConfig, dist_utils, find_free_port, load_checkpoint_inv
 from openpoints.utils import AverageMeter, ConfusionMatrix, get_mious
@@ -477,7 +476,9 @@ def validate_sphere(model, val_loader, cfg, num_votes=1, data_transform=None, ep
         dist.all_reduce(all_logits), dist.all_reduce(idx_points)
 
     # average overlapped predictions to subsampled points
-    all_logits = scatter(all_logits, idx_points, dim=0, reduce='mean')
+    # all_logits = scatter(all_logits, idx_points, dim=0, reduce='mean')
+    # function call migrated to use pytorch directly instead of 3rd party library
+    all_logits = torch.scatter_reduce(src=all_logits, dim=0, index=idx_points, reduce='mean')
 
     # now, project the original points to the subsampled points
     # these two targets would be very similar but not the same
@@ -609,7 +610,8 @@ def test(model, data_list, cfg, num_votes=1):
         if not nearest_neighbor:
             # average merge overlapped multi voxels logits to original point set
             idx_points = torch.from_numpy(np.hstack(idx_points)).cuda(non_blocking=True)
-            all_logits = scatter(all_logits, idx_points, dim=0, reduce='mean')
+            # all_logits = scatter(all_logits, idx_points, dim=0, reduce='mean')
+            all_logits = torch.scatter_reduce(src=all_logits, index=idx_points, dim=0, reduce='mean')
         else:
             # interpolate logits by nearest neighbor
             all_logits = all_logits[reverse_idx_part][voxel_idx][reverse_idx]
